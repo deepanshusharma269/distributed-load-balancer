@@ -59,7 +59,7 @@ src/main/java/com/loadbalancer/
 
 ### Build
 ```bash
-git clone https://github.com/YOUR_USERNAME/distributed-load-balancer.git
+git clone https://github.com/deepanshusharma269/distributed-load-balancer.git
 cd distributed-load-balancer
 mvn clean package -q
 ```
