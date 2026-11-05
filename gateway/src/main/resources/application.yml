@@ -1,0 +1,42 @@
+server:
+  port: ${SERVER_PORT:8080}
+
+spring:
+  application:
+    name: inference-gateway
+
+gateway:
+  request-timeout: ${GATEWAY_REQUEST_TIMEOUT:3s}
+  health-timeout: ${GATEWAY_HEALTH_TIMEOUT:1s}
+  strategy: ${GATEWAY_STRATEGY:round-robin}
+  ewma-alpha: 0.3
+  backends:
+    - id: fast
+      url: ${FAST_BACKEND_URL:http://mock-fast:8081}
+      weight: 3
+    - id: medium
+      url: ${MEDIUM_BACKEND_URL:http://mock-medium:8081}
+      weight: 2
+    - id: slow
+      url: ${SLOW_BACKEND_URL:http://mock-slow:8081}
+      weight: 1
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include:
+          - health
+          - prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  metrics:
+    distribution:
+      percentiles-histogram:
+        gateway.request.latency: true
+  prometheus:
+    metrics:
+      export:
+        enabled: true
