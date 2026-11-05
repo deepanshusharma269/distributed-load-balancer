@@ -1,0 +1,49 @@
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
+    environment:
+      JAVA_TOOL_OPTIONS: -Xmx128m
+      FAST_BACKEND_URL: http://mock-fast:8081
+      MEDIUM_BACKEND_URL: http://mock-medium:8081
+      SLOW_BACKEND_URL: http://mock-slow:8081
+    ports:
+      - "80:8080"
+    depends_on:
+      - mock-fast
+      - mock-medium
+      - mock-slow
+
+  mock-fast:
+    build:
+      context: .
+      dockerfile: mock-inference/Dockerfile
+    environment:
+      JAVA_TOOL_OPTIONS: -Xmx128m
+      SERVER_PORT: 8081
+      BASE_LATENCY_MS: 50
+      PER_TOKEN_MS: 2
+      ERROR_RATE: 0.0
+
+  mock-medium:
+    build:
+      context: .
+      dockerfile: mock-inference/Dockerfile
+    environment:
+      JAVA_TOOL_OPTIONS: -Xmx128m
+      SERVER_PORT: 8081
+      BASE_LATENCY_MS: 100
+      PER_TOKEN_MS: 2
+      ERROR_RATE: 0.0
+
+  mock-slow:
+    build:
+      context: .
+      dockerfile: mock-inference/Dockerfile
+    environment:
+      JAVA_TOOL_OPTIONS: -Xmx128m
+      SERVER_PORT: 8081
+      BASE_LATENCY_MS: 300
+      PER_TOKEN_MS: 2
+      ERROR_RATE: 0.0

@@ -1,162 +1,114 @@
-# Distributed Load Balancer
+# AI Inference Gateway
 
-[![CI](https://github.com/YOUR_USERNAME/distributed-load-balancer/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_USERNAME/distributed-load-balancer/actions)
-[![Java](https://img.shields.io/badge/Java-17-blue.svg)](https://openjdk.org/projects/jdk/17/)
-[![Maven](https://img.shields.io/badge/build-Maven-orange.svg)](https://maven.apache.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+A Java 21 / Spring Boot 3 WebFlux gateway that proxies completion requests to configurable inference backends. The included mock inference service lets you exercise latency, failure, routing, and health behavior without a model provider.
 
-A production-quality, thread-safe Java load balancer featuring three pluggable strategies, automatic health-check-driven node eviction, and P50/P90/P99 latency metrics — built to demonstrate distributed systems design and low-latency concurrency patterns.
+## Architecture
 
----
+```text
+Client
+  |
+  | POST /v1/completions
+  v
+Gateway (WebFlux, port 80 in Compose)
+  |-- routing strategy + health state + retry/timeout
+  |-- WebClient --------------------> mock-fast   (50 ms base latency)
+  |-- WebClient --------------------> mock-medium (100 ms base latency)
+  |-- WebClient --------------------> mock-slow   (300 ms base latency)
+  |
+  |-- /admin/backends
+  |-- /admin/strategy
+  `-- /actuator/prometheus
+```
 
-## Features
+The Maven reactor contains `gateway/` and `mock-inference/`. The gateway probes each backend's `/health` endpoint every two seconds, marks it unhealthy after three consecutive failures, and restores it after two consecutive successes. Failed inference calls also count toward the failure streak. A failed request is retried once on another healthy backend.
 
-| Capability | Details |
+## Routing strategies
+
+Select a strategy with `GATEWAY_STRATEGY` or change it at runtime through `POST /admin/strategy`.
+
+| Name | Behavior |
 |---|---|
-| **Strategies** | Round Robin · Weighted Round Robin (Nginx smooth algo) · Least Connections |
-| **Health Checks** | Configurable fail/recover thresholds; unhealthy nodes evicted automatically |
-| **Metrics** | P50 / P90 / P99 / mean latency · throughput (req/s) · per-backend breakdown |
-| **Concurrency** | Fully thread-safe — `AtomicInteger`, `ConcurrentHashMap`, `volatile` strategy field |
-| **Extensibility** | `LoadBalancingStrategy` interface — new algorithm = 1 class + 1 factory entry |
-| **Simulation** | 10 000 concurrent requests · 4 virtual backends · 3-strategy comparison table |
+| `round-robin` | Atomic counter distributes requests evenly across healthy backends. |
+| `smooth-weighted-round-robin` | Nginx-style smooth weighted rotation using each backend's configured weight. |
+| `least-outstanding-requests` | Picks the backend with the fewest in-flight calls. |
+| `latency-aware-ewma` | Samples two healthy backends and chooses the lower observed EWMA latency. |
 
----
+Weights are configured under `gateway.backends` in [application.yml](gateway/src/main/resources/application.yml). Each route tracks in-flight calls and latency; the request path decrements in-flight state in Reactor's `doFinally` hook, including errors and timeouts.
 
-## Project Structure
+## Run locally
 
-```
-src/main/java/com/loadbalancer/
-├── core/
-│   ├── BackendNode.java          # Server node with atomic counters
-│   ├── BackendRegistry.java      # Thread-safe node registry + eviction
-│   ├── Dispatcher.java           # Routes requests via injected strategy
-│   └── Request.java              # Immutable request value object
-├── strategy/
-│   ├── LoadBalancingStrategy.java  # Interface (Open/Closed Principle)
-│   ├── RoundRobinStrategy.java
-│   ├── WeightedRoundRobinStrategy.java
-│   ├── LeastConnectionsStrategy.java
-│   └── StrategyFactory.java
-├── health/
-│   ├── HealthChecker.java        # Scheduled probe loop with streak counters
-│   └── HealthProbe.java          # @FunctionalInterface — TCP / stub / custom
-├── metrics/
-│   ├── LatencyRecorder.java      # Lock-efficient ring-buffer + percentile math
-│   └── MetricsCollector.java     # Aggregates throughput + per-node stats
-├── simulation/
-│   └── LoadBalancerSimulation.java  # 10k-request 3-strategy comparison
-└── cli/
-    └── LoadBalancerCLI.java      # picocli entry point
+Requires Java 21 and Maven 3.9+. To run the mock services directly, start three instances with distinct `SERVER_PORT` values (the Compose setup below does this automatically). The gateway backend URLs can be overridden with `FAST_BACKEND_URL`, `MEDIUM_BACKEND_URL`, and `SLOW_BACKEND_URL`.
+
+```powershell
+mvn --batch-mode clean verify
+mvn --batch-mode -pl mock-inference spring-boot:run
+mvn --batch-mode -pl gateway spring-boot:run
 ```
 
----
+Start the full demo with Docker Compose; the gateway is published on port 80:
 
-## Quick Start
-
-### Prerequisites
-- Java 17+
-- Maven 3.8+
-
-### Build
-```bash
-git clone https://github.com/YOUR_USERNAME/distributed-load-balancer.git
-cd distributed-load-balancer
-mvn clean package -q
+```sh
+docker compose up --build
 ```
 
-### Run — Full Simulation (all 3 strategies, 10 000 requests)
-```bash
-java -jar target/distributed-load-balancer-1.0.0.jar --mode simulate
+All containers set `JAVA_TOOL_OPTIONS=-Xmx128m`. Stop the demo with `docker compose down`.
+
+## API examples
+
+Create a completion:
+
+```sh
+curl -X POST http://localhost/v1/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt":"Explain weighted routing","maxTokens":32}'
 ```
 
-**Sample output:**
-```
-╔══════════════════════════════════════════════════════════════════════════════╗
-║           LOAD BALANCER SIMULATION — STRATEGY COMPARISON                    ║
-║  Requests: 10000     Threads: 100       Backends: 4                         ║
-╠══════════════════════════════════════════════════════════════════════════════╣
-║ Strategy              │ Total    │ TPS       │ P50   │ P90   │ P99   │ Mean   ║
-╠══════════════════════════════════════════════════════════════════════════════╣
-║ RoundRobin            │ 10000    │ 91823     │ 55    │ 112   │ 140   │ 60.3   ║
-║ WeightedRoundRobin    │ 10000    │ 94512     │ 28    │ 58    │ 82    │ 31.5   ║
-║ LeastConnections      │ 10000    │ 93100     │ 35    │ 72    │ 130   │ 42.1   ║
-╚══════════════════════════════════════════════════════════════════════════════╝
+Inspect backend health and counters:
 
-Weighted RR P90 improvement over Round Robin: 48.2%
+```sh
+curl http://localhost/admin/backends
 ```
 
-### Run — Single Strategy
-```bash
-# Round Robin, 5000 requests, 80 threads
-java -jar target/distributed-load-balancer-1.0.0.jar \
-     --mode single --strategy rr --requests 5000 --threads 80
+Switch the active routing algorithm:
 
-# Weighted Round Robin
-java -jar target/distributed-load-balancer-1.0.0.jar \
-     --mode single --strategy wrr --requests 5000
-
-# Least Connections
-java -jar target/distributed-load-balancer-1.0.0.jar \
-     --mode single --strategy lc
+```sh
+curl -X POST http://localhost/admin/strategy \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"latency-aware-ewma"}'
 ```
 
-### Run Tests
-```bash
-mvn test
+Degrade a mock backend at runtime (from the Compose network):
+
+```sh
+curl -X POST http://localhost:8081/admin/degrade \
+  -H 'Content-Type: application/json' \
+  -d '{"baseLatencyMs":500,"perTokenMs":10}'
 ```
 
----
+Scrape metrics:
 
-## Design Decisions
-
-### Why `AtomicInteger` on `BackendNode`?
-Active-connection counts are updated on every request from many threads simultaneously. Using `AtomicInteger` avoids locking the whole node while still guaranteeing visibility and atomicity.
-
-### Why Smooth Weighted Round Robin?
-Naive WRR (send 3 to A, then 1 to B, then 1 to C) creates bursty traffic. The Nginx-style smooth algorithm interleaves them (A B A C A A B…) giving better latency distribution while maintaining the exact weight ratio over time.
-
-### Why is `Dispatcher` strategy-agnostic?
-The `LoadBalancingStrategy` interface is injected at construction time. Adding a new algorithm like `RandomStrategy` or `IPHashStrategy` requires:
-1. Implement `LoadBalancingStrategy`
-2. Add one case to `StrategyFactory`
-3. Zero changes to `Dispatcher`, `HealthChecker`, or `MetricsCollector`
-
-### Health Check Architecture
-```
-HealthChecker (daemon thread, interval=5s)
-  └─ for each node in registry.getAllNodes()
-       └─ probe.isAlive(node)
-            ├─ success streak >= recoverThreshold → registry.markHealthy()
-            └─ failure streak >= failThreshold   → registry.markUnhealthy()
+```sh
+curl http://localhost/actuator/prometheus
 ```
 
----
+The gateway returns `503 Service Unavailable` when no healthy backend is available or all allowed attempts fail. Requests exceeding `gateway.request-timeout` also fail over and ultimately return 503 when no retry succeeds.
 
-## Extending the Load Balancer
+## Benchmark results
 
-### Add a new strategy (e.g. Random)
-```java
-// 1. Implement the interface
-public class RandomStrategy implements LoadBalancingStrategy {
-    private final Random rng = new Random();
+Numbers are intentionally blank until measured in a documented environment.
 
-    @Override
-    public Optional<BackendNode> select(List<BackendNode> nodes) {
-        if (nodes.isEmpty()) return Optional.empty();
-        return Optional.of(nodes.get(rng.nextInt(nodes.size())));
-    }
+| Strategy | Throughput (req/s) | P50 (ms) | P90 (ms) | P99 (ms) |
+|---|---:|---:|---:|---:|
+| Round Robin |  |  |  |  |
+| Smooth Weighted Round Robin |  |  |  |  |
+| Least Outstanding Requests |  |  |  |  |
+| Latency-Aware EWMA |  |  |  |  |
 
-    @Override public String name() { return "Random"; }
-}
+## Limitations
 
-// 2. Wire into StrategyFactory
-case "random" -> new RandomStrategy();
-```
-
-That's it. Dispatcher, HealthChecker, and MetricsCollector require no changes.
-
----
-
-## License
-
-MIT — free to use, modify, and distribute. See [LICENSE](LICENSE).
+- The mock inference service returns fabricated text; this repository does not connect to a model or implement tokenization, streaming, or model-specific request formats.
+- Health and routing state are in-memory and local to each gateway process. There is no shared coordination across gateway replicas.
+- Admin routes and actuator metrics have no authentication or authorization. Do not expose them to untrusted networks without adding access controls.
+- EWMA needs observations to warm up; the initial latency for an unobserved backend is unknown.
+- Retries are limited to one alternate backend and do not provide request deduplication or idempotency guarantees.
+- There are no rate limits, admission control, request queue bounds, or durable metrics storage.
