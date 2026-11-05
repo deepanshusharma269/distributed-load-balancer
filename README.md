@@ -41,17 +41,15 @@ Requires Java 21 and Maven 3.9+. To run the mock services directly, start three 
 
 ```powershell
 mvn --batch-mode clean verify
-mvn --batch-mode -pl mock-inference spring-boot:run
-mvn --batch-mode -pl gateway spring-boot:run
 ```
 
-Start the full demo with Docker Compose; the gateway is published on port 80:
+The simplest runnable setup is Docker Compose. It publishes the gateway on port 80 and the mock services on ports 8081–8083:
 
 ```sh
 docker compose up --build
 ```
 
-All containers set `JAVA_TOOL_OPTIONS=-Xmx128m`. Stop the demo with `docker compose down`.
+All containers set `JAVA_TOOL_OPTIONS=-Xmx128m`. The mock ports are published for local testing only; do not expose these unauthenticated admin endpoints to untrusted networks. Stop the demo with `docker compose down`.
 
 ## API examples
 
@@ -77,7 +75,7 @@ curl -X POST http://localhost/admin/strategy \
   -d '{"name":"latency-aware-ewma"}'
 ```
 
-Degrade a mock backend at runtime (from the Compose network):
+Degrade a mock backend at runtime:
 
 ```sh
 curl -X POST http://localhost:8081/admin/degrade \
