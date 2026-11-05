@@ -13,20 +13,28 @@ public class RoutingStrategyManager {
     private final AtomicReference<RoutingStrategy> active;
 
     public RoutingStrategyManager(GatewayProperties properties) {
-        strategies = Map.of(
-                "roundrobin", new RoundRobinStrategy(),
-                "smoothweightedroundrobin", new SmoothWeightedRoundRobinStrategy(),
-                "leastoutstandingrequests", new LeastOutstandingRequestsStrategy(),
-                "latencyawareewma", new LatencyAwareEwmaStrategy());
+        RoutingStrategy roundRobin = new RoundRobinStrategy();
+        RoutingStrategy weighted = new SmoothWeightedRoundRobinStrategy();
+        RoutingStrategy leastOutstanding = new LeastOutstandingRequestsStrategy();
+        RoutingStrategy latencyAware = new LatencyAwareEwmaStrategy();
+        strategies = Map.ofEntries(
+                Map.entry("roundrobin", roundRobin),
+                Map.entry("rr", roundRobin),
+                Map.entry("smoothweightedroundrobin", weighted),
+                Map.entry("weightedroundrobin", weighted),
+                Map.entry("wrr", weighted),
+                Map.entry("leastoutstandingrequests", leastOutstanding),
+                Map.entry("leastconnections", leastOutstanding),
+                Map.entry("latencyawareewma", latencyAware));
         active = new AtomicReference<>(resolve(properties.strategy()));
     }
 
     public RoutingStrategyManager() {
-        this.strategies = Map.of(
-                "roundrobin", new RoundRobinStrategy(),
-                "smoothweightedroundrobin", new SmoothWeightedRoundRobinStrategy(),
-                "leastoutstandingrequests", new LeastOutstandingRequestsStrategy(),
-                "latencyawareewma", new LatencyAwareEwmaStrategy());
+        this.strategies = Map.ofEntries(
+                Map.entry("roundrobin", new RoundRobinStrategy()),
+                Map.entry("smoothweightedroundrobin", new SmoothWeightedRoundRobinStrategy()),
+                Map.entry("leastoutstandingrequests", new LeastOutstandingRequestsStrategy()),
+                Map.entry("latencyawareewma", new LatencyAwareEwmaStrategy()));
         this.active = new AtomicReference<>(resolve("round-robin"));
     }
 

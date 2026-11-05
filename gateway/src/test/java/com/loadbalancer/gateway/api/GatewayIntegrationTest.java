@@ -35,6 +35,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 @AutoConfigureWebTestClient
 class GatewayIntegrationTest {
     private static final AtomicBoolean FAST_BACKEND_FAILS = new AtomicBoolean();
+    private static final AtomicBoolean FAST_BACKEND_SLOW = new AtomicBoolean();
     private static final MockWebServer fastServer = server("fast");
     private static final MockWebServer mediumServer = server("medium");
     private static final MockWebServer slowServer = server("slow");
@@ -74,12 +75,13 @@ class GatewayIntegrationTest {
                 if ("fast".equals(id) && FAST_BACKEND_FAILS.get()) {
                     return new MockResponse().setResponseCode(500);
                 }
-                return new MockResponse()
+                MockResponse response = new MockResponse()
                         .setHeader("Content-Type", "application/json")
-                        .setBodyDelay(25, java.util.concurrent.TimeUnit.MILLISECONDS)
                         .setBody("""
                                 {"completion":"ok-%s","tokens":1,"model":"test"}
                                 """.formatted(id));
+                return response.setBodyDelay("fast".equals(id) && FAST_BACKEND_SLOW.get()
+                        ? 6000 : 25, java.util.concurrent.TimeUnit.MILLISECONDS);
             }
         });
         try {
@@ -101,6 +103,7 @@ class GatewayIntegrationTest {
     void resetState() {
         loadClient = WebClient.builder().baseUrl("http://localhost:" + localPort).build();
         FAST_BACKEND_FAILS.set(false);
+        FAST_BACKEND_SLOW.set(false);
         backendRegistry.resetHealth();
         webTestClient.post().uri("/admin/strategy")
                 .bodyValue(new StrategyRequest("least-outstanding-requests"))
@@ -140,6 +143,21 @@ class GatewayIntegrationTest {
 
         assertNotNull(fastServer.takeRequest());
         assertNotNull(mediumServer.takeRequest());
+    }
+
+    @Test
+    void timesOutSlowBackendAndRetriesAnother() {
+        FAST_BACKEND_SLOW.set(true);
+
+        CompletionResponse response = loadClient.post()
+                .uri("/v1/completions")
+                .bodyValue(new CompletionRequest("timeout", 1))
+                .retrieve()
+                .bodyToMono(CompletionResponse.class)
+                .block(Duration.ofSeconds(8));
+
+        assertNotNull(response);
+        assertEquals("ok-medium", response.completion());
     }
 
     @Test
